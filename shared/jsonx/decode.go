@@ -23,6 +23,12 @@ type Limits struct {
 	MaxBytes int64
 	// MaxDepth is the deepest accepted nesting of arrays and objects.
 	MaxDepth int
+	// AllowUnknownFields makes members that bind to no struct field be
+	// skipped instead of refused (RFC 7519 section 4: unknown claims are
+	// ignored). Skipped members are still checked for size, depth, encoding
+	// and duplicate keys. A key that matches a known field only under case
+	// folding is still refused with ErrUnknownField, never bound.
+	AllowUnknownFields bool
 }
 
 // DefaultLimits is a conservative default for API bodies.
@@ -57,7 +63,7 @@ func DecodeStrict(r io.Reader, v any, lim Limits) error {
 		return fmt.Errorf("%w: lone surrogate escape", ErrInvalidJSON)
 	}
 
-	p := &parser{dec: json.NewDecoder(bytes.NewReader(data)), maxDepth: lim.MaxDepth}
+	p := &parser{dec: json.NewDecoder(bytes.NewReader(data)), maxDepth: lim.MaxDepth, allowUnknown: lim.AllowUnknownFields}
 	p.dec.UseNumber()
 	if err := p.document(rv.Elem().Type()); err != nil {
 		return err
@@ -65,7 +71,9 @@ func DecodeStrict(r io.Reader, v any, lim Limits) error {
 
 	tmp := reflect.New(rv.Elem().Type())
 	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
+	if !lim.AllowUnknownFields {
+		dec.DisallowUnknownFields()
+	}
 	if err := dec.Decode(tmp.Interface()); err != nil {
 		return ErrInvalidJSON
 	}
@@ -165,8 +173,9 @@ func hex4(b []byte, i int) (rune, bool) {
 
 // parser walks the token stream alongside the decode target's type.
 type parser struct {
-	dec      *json.Decoder
-	maxDepth int
+	dec          *json.Decoder
+	maxDepth     int
+	allowUnknown bool
 }
 
 func (p *parser) document(t reflect.Type) error {
@@ -234,7 +243,7 @@ func (p *parser) object(t reflect.Type, depth int) error {
 			return ErrDuplicateKey
 		}
 		seen[id] = struct{}{}
-		elem, err := elemType(fields, mapElem, key)
+		elem, err := elemType(fields, mapElem, key, p.allowUnknown)
 		if err != nil {
 			return err
 		}
@@ -269,16 +278,31 @@ func objectShape(t reflect.Type) (map[string]reflect.Type, reflect.Type) {
 }
 
 // elemType is the type of the value under key; struct keys must match a field
-// name exactly.
-func elemType(fields map[string]reflect.Type, mapElem reflect.Type, key string) (reflect.Type, error) {
+// name exactly. With allowUnknown, a key that matches no field even under case
+// folding is skipped (nil type); one that matches only under folding, which
+// encoding/json would bind, is refused.
+func elemType(fields map[string]reflect.Type, mapElem reflect.Type, key string, allowUnknown bool) (reflect.Type, error) {
 	if fields == nil {
 		return mapElem, nil
 	}
-	ft, known := fields[key]
-	if !known {
+	if ft, known := fields[key]; known {
+		return ft, nil
+	}
+	if !allowUnknown || foldsToField(fields, key) {
 		return nil, ErrUnknownField
 	}
-	return ft, nil
+	return nil, nil
+}
+
+// foldsToField reports whether key equals a field name under case folding.
+func foldsToField(fields map[string]reflect.Type, key string) bool {
+	k := foldKey(key)
+	for name := range fields {
+		if foldKey(name) == k {
+			return true
+		}
+	}
+	return false
 }
 
 // foldKey maps a key to a canonical form shared by all keys that are equal

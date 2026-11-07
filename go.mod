@@ -4,6 +4,7 @@ go 1.27
 
 require (
 	connectrpc.com/connect v1.21.1
+	github.com/go-jose/go-jose/v4 v4.1.9
 	github.com/jackc/pgx/v5 v5.12.0
 	golang.org/x/crypto v0.58.0
 	google.golang.org/protobuf v1.36.12

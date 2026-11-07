@@ -86,6 +86,13 @@ linters:
             - {pkg: crypto/subtle, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
             - {pkg: golang.org/x/crypto, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
             - {pkg: github.com/go-jose/go-jose, desc: all cryptography goes through shared/crypto (CLAUDE.md)}
+        # Key helpers that generate private keys on the fly exist for tests only.
+        cryptotest-only-in-tests:
+          files:
+            - $all
+            - "!$test"
+          deny:
+            - {pkg: github.com/aleogr/iam/shared/crypto/cryptotest, desc: test-only key helpers; never import them from production code}
         no-math-rand:
           files:
             - $all

@@ -61,6 +61,40 @@ func FuzzDecodeStrict(f *testing.F) {
 	})
 }
 
+// With AllowUnknownFields, accepted input must decode exactly as plain
+// encoding/json does (no member bound case-insensitively), and anything the
+// strict mode accepts must be accepted with the same value.
+func FuzzDecodeStrictAllowUnknown(f *testing.F) {
+	addSeeds(f)
+	lim := jsonx.Limits{MaxBytes: 256, MaxDepth: 8, AllowUnknownFields: true}
+	strict := jsonx.Limits{MaxBytes: 256, MaxDepth: 8}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var got, strictGot doc
+		err := jsonx.DecodeStrict(bytes.NewReader(data), &got, lim)
+		strictErr := jsonx.DecodeStrict(bytes.NewReader(data), &strictGot, strict)
+		if err != nil {
+			if !isSentinel(err) {
+				t.Fatalf("error is not a sentinel: %v", err)
+			}
+			if got != (doc{}) {
+				t.Fatalf("value not zero after error %v: %+v", err, got)
+			}
+			if strictErr == nil {
+				t.Fatalf("strict mode accepts what the lenient mode refuses: %v", err)
+			}
+			return
+		}
+		if strictErr == nil && strictGot != got {
+			t.Fatalf("modes disagree on the value")
+		}
+		var again doc
+		if json.Unmarshal(data, &again) != nil || again != got {
+			t.Fatalf("accepted input disagrees with encoding/json")
+		}
+		oracle(t, data, lim.MaxDepth, false)
+	})
+}
+
 func FuzzDecodeStrictAny(f *testing.F) {
 	addSeeds(f)
 	lim := jsonx.Limits{MaxBytes: 256, MaxDepth: 8}

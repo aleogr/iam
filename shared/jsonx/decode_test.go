@@ -3,6 +3,7 @@ package jsonx_test
 import (
 	"errors"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -373,4 +374,60 @@ func TestDecodeStrictEmbeddedDominance(t *testing.T) {
 		check(t, &ambiguous{}, `{"other":1}`, nil)
 		check(t, &eqDepth{}, `{"name":{"a":1}}`, jsonx.ErrUnknownField)
 	})
+}
+
+func TestDecodeStrictAllowUnknownFields(t *testing.T) {
+	const kelvin = "K"
+	lim := jsonx.Limits{MaxBytes: 1 << 10, MaxDepth: 4, AllowUnknownFields: true}
+	tests := []struct {
+		name string
+		in   string
+		want error
+	}{
+		{"unknown skipped", `{"l":{"a":1,"zzz":[1,{"q":2}]},"zzz":"x","inherited":5}`, nil},
+		{"json dash never binds", `{"Skip":1}`, nil},
+		{"unknown nested in slice", `{"list":[{"a":1,"new":true}]}`, nil},
+		{"duplicate unknown", `{"zzz":1,"zzz":2}`, jsonx.ErrDuplicateKey},
+		{"duplicate inside unknown", `{"zzz":{"q":1,"q":2}}`, jsonx.ErrDuplicateKey},
+		{"case only key", `{"l":{"A":1}}`, jsonx.ErrUnknownField},
+		{"kelvin only", `{"l":{"` + kelvin + `":1}}`, jsonx.ErrUnknownField},
+		{"untagged case", `{"plain":1}`, jsonx.ErrUnknownField},
+		{"promoted case", `{"Inherited":1}`, jsonx.ErrUnknownField},
+		{"outer case", `{"L":{}}`, jsonx.ErrUnknownField},
+		{"case duplicate", `{"l":{"a":1,"A":2}}`, jsonx.ErrDuplicateKey},
+		{"too deep inside unknown", `{"zzz":[[[[1]]]]}`, jsonx.ErrTooDeep},
+		{"bad utf8 inside unknown", "{\"zzz\":\"\xff\"}", jsonx.ErrInvalidJSON},
+		{"lone surrogate inside unknown", `{"zzz":"\ud800"}`, jsonx.ErrInvalidJSON},
+		{"trailing data", `{"zzz":1}{}`, jsonx.ErrTrailingData},
+		{"too large", `{"zzz":"` + strings.Repeat("x", 1<<10) + `"}`, jsonx.ErrTooLarge},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var got embedded
+			err := jsonx.DecodeStrict(strings.NewReader(tc.in), &got, lim)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("want %v, got %v", tc.want, err)
+			}
+			if err != nil && !reflect.ValueOf(got).IsZero() {
+				t.Fatalf("value not zero: %+v", got)
+			}
+		})
+	}
+}
+
+func TestDecodeStrictAllowUnknownFieldsValue(t *testing.T) {
+	lim := jsonx.Limits{MaxBytes: 1 << 10, MaxDepth: 4, AllowUnknownFields: true}
+	var got embedded
+	in := `{"l":{"a":7,"zzz":1},"list":[{"k":2,"new":0}],"zzz":"x","Plain":3,"inherited":5}`
+	if err := jsonx.DecodeStrict(strings.NewReader(in), &got, lim); err != nil {
+		t.Fatal(err)
+	}
+	if got.Lower.A != 7 || len(got.List) != 1 || got.List[0].K != 2 || got.Plain != 3 || got.Inherited != 5 {
+		t.Fatalf("decoded %+v", got)
+	}
+	// The default stays strict.
+	lim.AllowUnknownFields = false
+	if err := jsonx.DecodeStrict(strings.NewReader(`{"zzz":1}`), &got, lim); !errors.Is(err, jsonx.ErrUnknownField) {
+		t.Fatalf("default mode: %v", err)
+	}
 }
